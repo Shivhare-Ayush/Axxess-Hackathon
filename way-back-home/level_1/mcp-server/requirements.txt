@@ -3,6 +3,9 @@
 # FastMCP - Simple, Pythonic MCP server framework
 fastmcp>=2.12.0
 
+# Google GenAI (Vertex AI) - for Gemini Vision and NER tools
+google-genai>=1.0.0
+
 # ICD-11 code lookups (local database, no external API needed)
 simple-icd-11
 

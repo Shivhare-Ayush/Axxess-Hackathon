@@ -1,4 +1,4 @@
-# Level 1: Location Analyzer MCP Server
+# Level 1: Clinical Coder MCP Server
 # Cloud Build configuration for deployment to Cloud Run
 
 steps:
@@ -7,14 +7,14 @@ steps:
     args:
       - 'build'
       - '-t'
-      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/location-analyzer:latest'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/clinical-coder:latest'
       - '.'
 
   # Push the container image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/location-analyzer:latest'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/clinical-coder:latest'
 
   # Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -22,9 +22,9 @@ steps:
     args:
       - 'run'
       - 'deploy'
-      - 'location-analyzer'
+      - 'clinical-coder'
       - '--image'
-      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/location-analyzer:latest'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/clinical-coder:latest'
       - '--region'
       - '${_REGION}'
       - '--platform'
@@ -45,7 +45,7 @@ steps:
       - '--set-env-vars'
       - 'GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=${_REGION}'
       - '--labels'
-      - 'app=way-back-home,level=1,component=mcp-server'
+      - 'app=diagnostic-assistant,level=1,component=mcp-server'
 
 substitutions:
   _REGION: us-central1
