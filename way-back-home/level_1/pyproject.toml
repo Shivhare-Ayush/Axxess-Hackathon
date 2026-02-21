@@ -1,0 +1,16 @@
+[project]
+name = "diagnostic-assistant"
+version = "0.1.0"
+description = "Clinical Diagnostic Assistant - Multi-Agent Patient Intake and ICD-11 Coding"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "google-genai>=1.0.0",
+    "google-adk==1.17.0",
+    "requests>=2.31.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0.0",
+]
