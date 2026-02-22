@@ -25,6 +25,7 @@ import os
 import logging
 import httpx
 
+from google.adk.models import Gemini
 from google.adk.agents import Agent, ParallelAgent
 from google.adk.agents.callback_context import CallbackContext
 
@@ -35,6 +36,8 @@ from agent.agents.records_analyst import records_analyst
 
 # Import diagnosis submission tool
 from agent.tools.diagnosis_tools import submit_diagnosis_tool
+from agent.tools.icd_tools import icd_lookup
+
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +121,12 @@ diagnostic_crew = ParallelAgent(
 root_agent = Agent(
     name="ClinicalOrchestratorAI",
     model="gemini-2.5-flash",
+    # model = Gemini(
+    # model="gemini-2.5-flash",
+    # vertexai=True,
+    # project="axxess-hackathon",
+    # location="us-central1"),
+    
     description="Orchestrates multi-modal patient intake analysis and synthesizes a final clinical report.",
     instruction="""You are the Clinical Orchestrator AI coordinating a patient diagnostic workup.
 
@@ -149,13 +158,17 @@ Combine all three reports into:
 4. **Patient recovery plan** — jargon-free summary the patient can understand
 
 ### STEP 4: SUBMIT DIAGNOSIS
-Call submit_diagnosis with the ICD-11 code list and the clinical summary.
+Call submit_diagnosis with the ICD-11 code list and the clinical summary
+
+If ICD codes are not provided by Clinical Scribe,
+call icd_lookup to validate and retrieve official ICD-11 codes..
 
 ## Response Style
 Be precise and clinical in your synthesis. Flag any contradictions between specialist reports.
 When records show risk flags, prominently note them in the EMR entry.
 """,
     sub_agents=[diagnostic_crew],
-    tools=[submit_diagnosis_tool],
+    # tools=[submit_diagnosis_tool],
+    tools=[submit_diagnosis_tool, icd_lookup],
     before_agent_callback=setup_patient_context
 )
