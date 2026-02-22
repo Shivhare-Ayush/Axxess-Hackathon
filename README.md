@@ -67,3 +67,70 @@ The system highlights:
 ---
 
 ## 🏗️ System Architecture
+Frontend (Next.js + 3D Visualization)
+↓
+Backend API (FastAPI on Cloud Run)
+↓
+Agent Layer (ADK + MCP + LLM Orchestration)
+↓
+Vertex AI (Multimodal Models)
+↓
+Firestore + Firebase Storage
+
+
+The architecture supports:
+
+- Stateless backend scaling  
+- Event-driven AI execution  
+- Agent parallelization  
+- Real-time state synchronization  
+
+---
+
+## 🚀 Local Development
+
+### Backend
+
+```bash
+cd dashboard/backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8080
+Frontend
+cd dashboard/frontend
+npm install
+npm run dev
+☁️ Deployment
+
+Designed for cloud-native deployment on Google Cloud:
+
+gcloud builds submit --config cloudbuild.yaml
+
+Key components:
+
+Cloud Run (API hosting)
+
+Firestore (state persistence)
+
+Firebase Storage (media handling)
+
+Vertex AI (model inference)
+
+The backend scales to zero when idle and auto-scales under load.
+
+💡 Design Highlights
+
+Modular multi-level architecture
+
+Clean separation between visualization and AI orchestration
+
+Lightweight API-based agent invocation
+
+Structured JSON outputs for state tracking
+
+Cost-efficient, serverless infrastructure
+
+📄 License
+
+Apache 2.0 — See LICENSE for details.
