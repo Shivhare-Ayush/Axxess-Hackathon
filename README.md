@@ -1,4 +1,4 @@
-# 🚀 AI-Powered Immersive Agent Platform
+# MedVisor 🚀 AI-Powered Immersive Agent Platform
 
 ![Platform Preview](dashboard/frontend/public/prelude.png)
 
