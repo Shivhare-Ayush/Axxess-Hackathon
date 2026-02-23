@@ -1,24 +1,41 @@
-from google.adk.tools import Tool
-from agent.services.icd_service import ICDService
+"""
+icd_tools.py — ADK-compatible ICD lookup tool
 
-icd_service = ICDService()
+Replaces the old Tool-based implementation.
+ADK uses FunctionTool, not Tool.
+"""
 
-def icd_lookup_tool(query: str):
-    results = icd_service.search_icd(query)
+import os
+import logging
 
-    simplified = []
+logger = logging.getLogger(__name__)
 
-    for item in results.get("destinationEntities", [])[:5]:
-        simplified.append({
-            "code": item.get("theCode"),
-            "title": item.get("title")
-        })
+try:
+    from agent.services.icd_service import ICDService
+except ImportError:
+    from services.icd_service import ICDService
 
-    return simplified
+_icd = ICDService()
 
 
-icd_lookup = Tool(
-    name="icd_lookup",
-    description="Search ICD-11 codes for a medical condition or symptom.",
-    func=icd_lookup_tool,
-)
+def icd_lookup(query: str) -> list[dict]:
+    """
+    Search ICD-11 for a medical condition or symptom.
+
+    Args:
+        query: symptom or condition string (e.g. "chest pain")
+
+    Returns:
+        List of matching ICD-11 codes with titles.
+    """
+    return _icd.search(query, max_results=5)
+
+
+# ADK FunctionTool wrapper
+try:
+    from google.adk.tools import FunctionTool
+    icd_lookup_tool = FunctionTool(func=icd_lookup)
+    logger.info("[icd_tools] FunctionTool registered.")
+except ImportError:
+    icd_lookup_tool = icd_lookup
+    logger.warning("[icd_tools] google.adk not found — using raw function.")

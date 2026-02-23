@@ -5,7 +5,7 @@ This MCP server provides tools for analyzing patient data and mapping to ICD-11:
 - analyze_clinical_notes:   Extract structured entities from transcripts / notes
 - analyze_radiology:        Analyze medical imaging via Gemini Vision
 - extract_patient_entities: Extract patient EMR entities (subject_id, conditions …)
-- map_icd_codes:            Map extracted conditions to official ICD-11 codes
+- map_icd_codes:            Map extracted conditions to official ICD-11 codes (WHO REST API)
 
 Built with FastMCP for simple, Pythonic MCP server development.
 Deployed to Cloud Run with HTTP transport for remote access.
@@ -15,6 +15,9 @@ import os
 import json
 import asyncio
 import logging
+import time
+import requests
+import re
 from typing import Annotated
 
 from pydantic import Field
@@ -22,7 +25,6 @@ from fastmcp import FastMCP
 
 from google import genai
 from google.genai import types as genai_types
-import simple_icd_11 as icd
 
 # =============================================================================
 # LOGGING SETUP
@@ -57,6 +59,82 @@ client = genai.Client(
 )
 
 logger.info(f"Clinical Coder MCP Server initialized (project: {PROJECT_ID})")
+
+
+# =============================================================================
+# WHO ICD-11 REST API CLIENT (replaces simple_icd_11)
+# =============================================================================
+
+_icd_token: str | None = None
+_icd_token_expiry: float = 0
+
+ICD_TOKEN_URL = "https://icdaccessmanagement.who.int/connect/token"
+ICD_SEARCH_URL = "https://id.who.int/icd/release/11/2024-01/mms/search"
+
+
+def _get_icd_token() -> str:
+    global _icd_token, _icd_token_expiry
+    if _icd_token and time.time() < _icd_token_expiry:
+        return _icd_token
+
+    client_id = os.environ.get("ICD_CLIENT_ID", "")
+    client_secret = os.environ.get("ICD_CLIENT_SECRET", "")
+
+    if not client_id or not client_secret:
+        raise ValueError("ICD_CLIENT_ID and ICD_CLIENT_SECRET environment variables must be set.")
+
+    resp = requests.post(
+        ICD_TOKEN_URL,
+        data={
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "scope": "icdapi_access",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    _icd_token = data["access_token"]
+    _icd_token_expiry = time.time() + data.get("expires_in", 3600) - 60
+    logger.info("[ICD] Token refreshed.")
+    return _icd_token
+
+
+def _search_icd(condition: str) -> dict:
+    """Search WHO ICD-11 API for a single condition. Returns {code, title, error}."""
+    if not condition or not condition.strip():
+        return {"code": None, "title": None, "error": "Empty query"}
+    try:
+        token = _get_icd_token()
+        resp = requests.get(
+            ICD_SEARCH_URL,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "Accept-Language": "en",
+                "API-Version": "v2",
+            },
+            params={
+                "q": condition,
+                "useFlexisearch": "true",
+                "flatResults": "true",
+                "highlightingEnabled": "false",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        entities = resp.json().get("destinationEntities", [])
+        if not entities:
+            return {"code": None, "title": None, "error": "No match found"}
+        top = entities[0]
+        code = top.get("theCode") or top.get("code", "")
+        title = re.sub(r"<[^>]+>", "", top.get("title", ""))
+        return {"code": code, "title": title, "error": None}
+    except Exception as e:
+        logger.error(f"[ICD] Error searching '{condition}': {e}")
+        return {"code": None, "title": None, "error": str(e)}
 
 
 # =============================================================================
@@ -103,13 +181,6 @@ def analyze_clinical_notes(
     Extract structured clinical entities from a consultation transcript or doctor notes.
 
     Uses Gemini to identify chief complaint, symptoms, vitals, and medications.
-
-    Args:
-        transcript:     Transcribed speech text (preferred input)
-        clinical_notes: Free-text notes (used when transcript is empty)
-
-    Returns:
-        dict with chief_complaint, symptoms, vitals, mentioned_medications, confidence
     """
     text = transcript or clinical_notes
     logger.info(f">>> 📋 Tool: 'analyze_clinical_notes' called ({len(text)} chars)")
@@ -172,15 +243,7 @@ def analyze_radiology(
         Field(description="Cloud Storage URL (gs://...) of the medical image")
     ]
 ) -> dict:
-    """
-    Analyze a medical image (X-ray, MRI, CT, dermatological photo) for anomalies.
-
-    Args:
-        image_url: Cloud Storage URL of the medical image
-
-    Returns:
-        dict with image_type, findings, anatomical_region, severity, confidence
-    """
+    """Analyze a medical image (X-ray, MRI, CT, dermatological photo) for anomalies."""
     logger.info(f">>> 🩻 Tool: 'analyze_radiology' called for '{image_url}'")
 
     try:
@@ -221,19 +284,7 @@ def extract_patient_entities(
         Field(description="Patient / subject identifier (overrides any ID found in text)")
     ] = ""
 ) -> dict:
-    """
-    Extract structured patient entities from raw EMR text.
-
-    Identifies subject_id, chronic conditions, allergies, current medications,
-    and risk flags that could affect the current encounter.
-
-    Args:
-        patient_context: Free-text EMR data, patient history, or clinical context
-        subject_id:      Explicit patient ID — always takes precedence over text extraction
-
-    Returns:
-        dict with subject_id, conditions, allergies, medications, risk_flags, confidence
-    """
+    """Extract structured patient entities from raw EMR text."""
     logger.info(f">>> 🗂  Tool: 'extract_patient_entities' called (subject_id='{subject_id}')")
 
     prompt = f"""Extract structured patient entities from this EMR text.
@@ -261,7 +312,6 @@ EMR text: {patient_context}
         logger.error(f"    ✗ extract_patient_entities failed: {e}")
         result = {"error": str(e)}
 
-    # Explicit subject_id parameter always takes precedence over extracted value
     if subject_id:
         result["subject_id"] = subject_id
 
@@ -277,7 +327,7 @@ EMR text: {patient_context}
 
 
 # =============================================================================
-# TOOL: map_icd_codes
+# TOOL: map_icd_codes  (WHO REST API — replaces broken simple_icd_11)
 # =============================================================================
 
 @mcp.tool()
@@ -288,9 +338,7 @@ def map_icd_codes(
     ]
 ) -> dict:
     """
-    Map extracted clinical conditions to official ICD-11 codes.
-
-    Uses the simple-icd-11 library for local lookups — no external API needed.
+    Map extracted clinical conditions to official ICD-11 codes via WHO REST API.
 
     Args:
         conditions: List of condition/symptom strings to map
@@ -303,40 +351,29 @@ def map_icd_codes(
     results = []
 
     for condition in conditions:
-        try:
-            matches = icd.search(condition)
+        match = _search_icd(condition)
 
-            if matches:
-                code = matches[0]
-                description = icd.get_description(code)
-                results.append({
-                    "condition": condition,
-                    "icd11_code": code,
-                    "description": description
-                })
-                logger.info(f"    ✓ '{condition}' → {code}")
-            else:
-                results.append({
-                    "condition": condition,
-                    "icd11_code": None,
-                    "description": "No matching ICD-11 code found"
-                })
-                logger.warning(f"    ⚠ No code found for '{condition}'")
-
-        except Exception as e:
-            logger.error(f"    ✗ Error mapping '{condition}': {e}")
+        if match["code"]:
+            results.append({
+                "condition": condition,
+                "icd11_code": match["code"],
+                "description": match["title"],
+            })
+            logger.info(f"    ✓ '{condition}' → {match['code']} ({match['title']})")
+        else:
             results.append({
                 "condition": condition,
                 "icd11_code": None,
-                "description": f"Lookup error: {str(e)}"
+                "description": match.get("error", "No matching ICD-11 code found"),
             })
+            logger.warning(f"    ⚠ No code for '{condition}': {match.get('error')}")
 
     mapped_count = sum(1 for r in results if r["icd11_code"] is not None)
     logger.info(f"    ✓ Mapped {mapped_count}/{len(conditions)} conditions")
 
     return {
         "codes": results,
-        "mapped_count": mapped_count
+        "mapped_count": mapped_count,
     }
 
 

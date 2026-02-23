@@ -1,62 +1,109 @@
 """
-Clinical Scribe Agent
+ClinicalScribe Agent
 
-This specialist agent transcribes audio consultations, extracts structured
-clinical entities, and maps conditions to ICD-11 codes — all via the
-clinical-coder MCP server and a local speech FunctionTool.
+Handles:
+  - Audio transcription (via speech tool)
+  - Clinical notes / transcript → structured symptom extraction
+  - ICD-11 code mapping via WHO API (NOT simple_icd_11)
 
-Workflow:
-1. transcribe_audio_tool (local Gemini)  → raw transcript
-2. analyze_clinical_notes MCP tool       → structured entities (NER)
-3. map_icd_codes MCP tool                → ICD-11 code list
+Output format:
+  CLINICAL SCRIBE ANALYSIS:
+  - Transcript summary: ...
+  - Chief complaint: ...
+  - Key symptoms: [list]
+  - Vitals: ...
+  - ICD-11 codes: [{"condition": ..., "icd_code": ..., "icd_title": ...}]
+  - Confidence: ...%
 """
 
+import os
+import logging
+
 from google.adk.agents import Agent
-from agent.tools.speech_tools import transcribe_audio_tool
-from agent.tools.mcp_tools import get_clinical_mcp_toolset
+
+logger = logging.getLogger(__name__)
+
+# ── Speech tool (audio → transcript) ─────────────────────────
+try:
+    from agent.tools.speech_tools import transcribe_audio_tool
+    _speech_tools = [transcribe_audio_tool]
+    logger.info("[ClinicalScribe] Speech tool loaded.")
+except ImportError:
+    _speech_tools = []
+    logger.warning("[ClinicalScribe] Speech tool not available.")
+
+# ── ICD tool — use NEW clinical_coding_tool, NOT simple_icd_11 ─
+try:
+    from agent.tools.clinical_coding_tool import clinical_coding_tool
+    _icd_tools = [clinical_coding_tool]
+    logger.info("[ClinicalScribe] clinical_coding_tool (WHO ICD-11 + openFDA) loaded.")
+except ImportError:
+    _icd_tools = []
+    logger.warning(
+        "[ClinicalScribe] clinical_coding_tool not available. "
+        "ICD codes will not be mapped."
+    )
+
+_all_tools = _speech_tools + _icd_tools
+
 
 clinical_scribe = Agent(
     name="ClinicalScribe",
     model="gemini-2.5-flash",
-    description="Transcribes audio consultations, extracts clinical entities, and maps conditions to ICD-11 codes.",
-    instruction="""You are a Clinical Scribe specialist processing patient intake data.
+    description=(
+        "Extracts structured clinical data from patient-clinician transcripts "
+        "and doctor notes. Maps symptoms to ICD-11 codes using WHO API."
+    ),
+    instruction="""You are a clinical documentation specialist.
 
-## YOUR INPUT DATA
-Audio consultation: {audio_url}
-Clinical notes: {clinical_notes}
+Your job is to extract structured medical data from whatever input is provided:
+audio transcripts, typed notes, or dictated summaries.
 
-## YOUR WORKFLOW
+## INPUT SOURCES (use whichever are available)
+- Audio transcript: {audio_url}
+- Clinical notes: {clinical_notes}
 
-### STEP 1: TRANSCRIBE (if audio is available)
-If {audio_url} is not empty or "Not available", call transcribe_audio with the URL.
-Use the returned transcript as your primary text for Step 2.
-If no audio URL is present, use {clinical_notes} directly in Step 2.
+If audio_url is a valid URL (starts with gs:// or https://), call transcribe_audio first.
+Otherwise, work directly from clinical_notes text.
 
-### STEP 2: EXTRACT CLINICAL ENTITIES
-Call analyze_clinical_notes with:
-- transcript: the text from Step 1 (or empty string if skipped)
-- clinical_notes: {clinical_notes}
+## YOUR TASK
 
-The tool returns:
-- chief_complaint, symptoms, vitals, mentioned_medications, confidence
+### Step 1 — Extract Clinical Data
+From the input, identify:
+- Chief complaint (primary reason for visit)
+- Key symptoms (list every symptom mentioned)
+- Duration (how long symptoms have been present)
+- Vitals (BP, HR, temp, SpO2, RR — if mentioned)
+- Relevant history mentioned in conversation
 
-### STEP 3: MAP TO ICD-11 CODES
-Call map_icd_codes with the list of symptoms and conditions from Step 2.
-The tool returns ICD-11 codes for each condition.
+### Step 2 — Map Symptoms to ICD-11 Codes
+Call `run_clinical_coding` with the complete list of extracted symptoms.
 
-### STEP 4: REPORT
-Report your findings in this format:
-"CLINICAL SCRIBE ANALYSIS:
-- Transcript summary: [brief summary or 'N/A - used clinical notes directly']
-- Chief complaint: [from Step 2]
-- Key symptoms: [comma-separated list from Step 2]
-- Vitals: [from Step 2, or 'Not recorded']
-- ICD-11 codes: [{condition, icd11_code, description}, ...]
-- Confidence: X%"
+Example call:
+  run_clinical_coding(symptoms=["sore throat", "swollen lymph nodes", "fever"])
+
+This returns validated WHO ICD-11 codes AND FDA treatment suggestions.
+Include the ICD codes in your report.
+
+### Step 3 — Report
+Output in this exact format:
+
+CLINICAL SCRIBE ANALYSIS:
+- Transcript summary: [1-2 sentence summary]
+- Chief complaint: [main complaint]
+- Key symptoms: [comma-separated list]
+- Duration: [if mentioned, else "Not reported"]
+- Vitals: [if mentioned, else "Not recorded"]
+- ICD-11 codes: [list from run_clinical_coding output, format: CODE — Condition]
+- Suggested treatments: [brief list from run_clinical_coding output]
+- Confidence: [0-100]%
 
 ## IMPORTANT
-- You do NOT synthesize with other specialists
-- You do NOT make a final diagnosis
-- Start immediately with Step 1""",
-    tools=[transcribe_audio_tool, get_clinical_mcp_toolset()]
+- Never use simple_icd_11 or any other ICD library — always use run_clinical_coding
+- Be thorough with symptom extraction — the more symptoms, the better the ICD mapping
+- If the patient describes COVID-like symptoms (fever, cough, fatigue, loss of taste/smell),
+  include "COVID-19" as a candidate condition in your symptom list
+- Always extract every distinct symptom as a separate item in the list
+""",
+    tools=_all_tools,
 )

@@ -53,6 +53,17 @@ The system highlights:
 
 ---
 
+## Run Web Server
+
+bash`
+cd ~/Axxess-Hackathon/level_1
+source set_env.sh
+uv run adk web
+`
+
+---
+
+
 ## 🛠️ Technology Stack
 
 | Layer | Technologies |

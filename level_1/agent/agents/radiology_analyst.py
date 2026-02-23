@@ -1,49 +1,64 @@
 """
-Radiology Analyst Agent
+RadiologyAnalyst Agent
 
-This specialist agent analyzes medical imaging (X-rays, MRIs, dermatological
-photos) to identify anomalies and generate a structured visual report.
-
-Calls analyze_radiology via the clinical-coder MCP server, which uses
-Gemini Vision to examine the image and return structured findings.
+Analyzes medical images (X-ray, MRI, CT, dermatological) for anomalies.
+Uses MCP server if available, otherwise operates without image tools
+and relies on Gemini's built-in vision capabilities.
 """
 
+import logging
 from google.adk.agents import Agent
-from agent.tools.mcp_tools import get_clinical_mcp_toolset
+
+logger = logging.getLogger(__name__)
+
+# ── MCP toolset (optional) ────────────────────────────────────
+try:
+    from agent.tools.mcp_tools import get_clinical_mcp_toolset
+    _mcp = get_clinical_mcp_toolset()
+    _tools = [_mcp] if _mcp is not None else []
+    if _mcp:
+        logger.info("[RadiologyAnalyst] MCP toolset loaded.")
+    else:
+        logger.warning("[RadiologyAnalyst] No MCP toolset — running without image tools.")
+except Exception as e:
+    _tools = []
+    logger.warning(f"[RadiologyAnalyst] MCP import failed: {e}")
+
 
 radiology_analyst = Agent(
     name="RadiologyAnalyst",
     model="gemini-2.5-flash",
-    description="Analyzes medical imaging via the clinical-coder MCP server to produce a structured visual report.",
-    instruction="""You are a Radiology Analyst specialist processing medical imaging.
+    description=(
+        "Analyzes medical images (X-ray, MRI, CT, dermatological photos) "
+        "for anomalies, findings, and severity assessment."
+    ),
+    instruction="""You are a Radiology AI Analyst specializing in medical image interpretation.
 
-## YOUR INPUT DATA
-Medical image: {image_url}
+## INPUT
+- Image URL: {image_url}
 
-## YOUR WORKFLOW
+## YOUR TASK
 
-### STEP 1: CALL THE RADIOLOGY TOOL
-Call analyze_radiology with the image URL above.
-This will use Gemini Vision to examine the image and return:
-- image_type: what kind of image it is (X-ray, MRI, CT, dermatological, other)
-- findings: list of identified anomalies or "No significant findings"
-- anatomical_region: the body region examined
-- severity: none | mild | moderate | severe
-- confidence: 0.0–1.0
+If image_url is a valid gs:// or https:// URL:
+  - Use the analyze_radiology MCP tool if available
+  - Otherwise describe what you would look for given the clinical context
 
-### STEP 2: REPORT
-Report your findings clearly in this format:
-"RADIOLOGY ANALYSIS:
-- Image type: [from tool result]
-- Findings: [from tool result, or 'No significant findings']
-- Anatomical region: [from tool result]
-- Severity: [from tool result]
-- Clinical significance: [brief interpretation of what the findings suggest]
-- Confidence: X%"
+If image_url is "Not provided" or unavailable:
+  - State clearly that no imaging was provided
+  - Note what imaging would be recommended given available symptoms
+  - Do NOT ask the user for an image URL — just proceed
 
-## IMPORTANT
-- You do NOT make a final diagnosis
-- You do NOT synthesize with other specialists
-- Call analyze_radiology immediately with the URL above, then report""",
-    tools=[get_clinical_mcp_toolset()]
+## OUTPUT FORMAT
+
+RADIOLOGY ANALYSIS:
+- Image type: [X-ray / MRI / CT / dermatological / not provided]
+- Anatomical region: [region or N/A]
+- Findings: [list findings or "No image available"]
+- Severity: [none / mild / moderate / severe / N/A]
+- Recommendations: [suggested imaging if none provided]
+- Confidence: [0-100]%
+
+Always complete your report even without an image.
+""",
+    tools=_tools,
 )
